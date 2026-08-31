@@ -490,10 +490,10 @@ fn extract_token(source: &str) -> Option<String> {
 
         let mut cursor = start + "token".len();
         let key_quote = source.as_bytes().get(start.saturating_sub(1)).copied();
-        if matches!(key_quote, Some(b'"') | Some(b'\'')) {
-            if source.as_bytes().get(cursor).copied() == key_quote {
-                cursor += 1;
-            }
+        if matches!(key_quote, Some(b'"') | Some(b'\''))
+            && source.as_bytes().get(cursor).copied() == key_quote
+        {
+            cursor += 1;
         }
         while source
             .as_bytes()
