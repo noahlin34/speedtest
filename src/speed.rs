@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use reqwest::{Client, Response, Url};
+use reqwest::{Body, Client, Response, Url};
 use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
@@ -99,7 +99,7 @@ async fn run_speed_test_inner(updates: &UnboundedSender<SpeedUpdate>) -> Result<
     send_progress(updates, 0.08);
 
     send_phase(updates, TestPhase::Latency, 0.1);
-    let latency_ms = measure_latency(&client, &targets[0])
+    let latency_ms = run_latency_probes(&client, &targets, updates)
         .await
         .context("measuring latency")?;
     let _ = updates.send(SpeedUpdate::LatencyMs(latency_ms));
@@ -220,9 +220,44 @@ async fn fetch_targets(client: &Client, token: &str) -> Result<Vec<Url>> {
     Ok(targets)
 }
 
-async fn measure_latency(client: &Client, target: &Url) -> Result<f64> {
-    // A one-byte range avoids turning the latency probe into a download on
-    // servers that ignore HEAD or do not implement it.
+async fn run_latency_probes(
+    client: &Client,
+    targets: &[Url],
+    updates: &UnboundedSender<SpeedUpdate>,
+) -> Result<f64> {
+    const PROBE_COUNT: usize = 8;
+    let mut samples = Vec::with_capacity(PROBE_COUNT);
+    let mut first_error = None;
+
+    for i in 0..PROBE_COUNT {
+        let target = &targets[i % targets.len()];
+        match measure_latency_single(client, target).await {
+            Ok(lat) => {
+                let _ = updates.send(SpeedUpdate::LatencyMs(lat));
+                samples.push(lat);
+                send_progress(updates, 0.10 + 0.08 * ((i + 1) as f64 / PROBE_COUNT as f64));
+            }
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+        if i + 1 < PROBE_COUNT {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+    }
+
+    if samples.is_empty() {
+        return Err(first_error.unwrap_or_else(|| anyhow!("all latency probes failed")));
+    }
+
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = samples[samples.len() / 2];
+    Ok(median)
+}
+
+async fn measure_latency_single(client: &Client, target: &Url) -> Result<f64> {
     let started = Instant::now();
     let response = client
         .get(target.clone())
@@ -232,8 +267,6 @@ async fn measure_latency(client: &Client, target: &Url) -> Result<f64> {
         .await
         .context("latency request failed")?;
     ensure_success(&response, "Fast.com latency request")?;
-    // Waiting for the first body chunk measures connection, request, and
-    // server response latency instead of only measuring header dispatch.
     let mut response = response;
     let _ = response.chunk().await.context("reading latency response")?;
     Ok(started.elapsed().as_secs_f64() * 1_000.0)
@@ -347,7 +380,6 @@ async fn run_uploads(
     targets: &[Url],
     updates: &UnboundedSender<SpeedUpdate>,
 ) -> Result<f64> {
-    let payload = vec![0u8; UPLOAD_BYTES];
     let started = Instant::now();
     let sent_bytes = Arc::new(AtomicU64::new(0));
     let mut jobs = JoinSet::new();
@@ -363,10 +395,19 @@ async fn run_uploads(
             next_target += 1;
             active += 1;
             let request_client = client.clone();
-            let request_payload = payload.clone();
-            jobs.spawn(async move { upload_one(&request_client, &target, request_payload).await });
+            let request_bytes = Arc::clone(&sent_bytes);
+            let request_updates = updates.clone();
+            jobs.spawn(async move {
+                upload_one(
+                    &request_client,
+                    &target,
+                    request_bytes,
+                    request_updates,
+                    started,
+                )
+                .await
+            });
         }
-
         let joined = jobs
             .join_next()
             .await
@@ -378,9 +419,9 @@ async fn run_uploads(
             0.68 + 0.30 * (completed as f64 / targets.len() as f64),
         );
         match joined {
-            Ok(Ok(bytes)) => {
+            Ok(Ok(_)) => {
                 successful += 1;
-                let total = sent_bytes.fetch_add(bytes, Ordering::Relaxed) + bytes;
+                let total = sent_bytes.load(Ordering::Relaxed);
                 let _ = updates.send(SpeedUpdate::UploadMbps(mbps(total, started.elapsed())));
             }
             Ok(Err(error)) => {
@@ -409,17 +450,62 @@ async fn run_uploads(
     Ok(mbps(total_bytes, started.elapsed()))
 }
 
-async fn upload_one(client: &Client, target: &Url, payload: Vec<u8>) -> Result<u64> {
+async fn upload_one(
+    client: &Client,
+    target: &Url,
+    bytes_sent: Arc<AtomicU64>,
+    updates: UnboundedSender<SpeedUpdate>,
+    started: Instant,
+) -> Result<u64> {
+    const CHUNK_SIZE: usize = 64 * 1024;
+    let chunk_data = vec![0u8; CHUNK_SIZE];
+    let total_chunks = UPLOAD_BYTES.div_ceil(CHUNK_SIZE);
+    let local_bytes = Arc::new(AtomicU64::new(0));
+    let local_bytes_clone = Arc::clone(&local_bytes);
+    let last_update = Arc::new(tokio::sync::Mutex::new(Instant::now()));
+
+    let stream = futures_util::stream::unfold(0usize, move |state| {
+        let chunk = chunk_data.clone();
+        let w_bytes = Arc::clone(&local_bytes_clone);
+        let g_bytes = Arc::clone(&bytes_sent);
+        let up = updates.clone();
+        let l_up = Arc::clone(&last_update);
+        async move {
+            if state < total_chunks {
+                let remaining = UPLOAD_BYTES.saturating_sub(state * CHUNK_SIZE);
+                let this_len = remaining.min(CHUNK_SIZE);
+                let slice = if this_len == CHUNK_SIZE {
+                    chunk
+                } else {
+                    chunk[..this_len].to_vec()
+                };
+                w_bytes.fetch_add(this_len as u64, Ordering::Relaxed);
+                let total = g_bytes.fetch_add(this_len as u64, Ordering::Relaxed) + this_len as u64;
+                let mut last = l_up.lock().await;
+                if last.elapsed() >= SPEED_UPDATE_INTERVAL {
+                    let _ = up.send(SpeedUpdate::UploadMbps(mbps(total, started.elapsed())));
+                    *last = Instant::now();
+                }
+                Some((Ok::<_, std::io::Error>(slice), state + 1))
+            } else {
+                None
+            }
+        }
+    });
+
+    let body = Body::wrap_stream(stream);
     let response = client
         .post(target.clone())
         .header(reqwest::header::CACHE_CONTROL, "no-cache")
         .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        .body(payload)
+        .header(reqwest::header::CONTENT_LENGTH, UPLOAD_BYTES.to_string())
+        .body(body)
         .send()
         .await
         .with_context(|| format!("POST {target}"))?;
     ensure_success(&response, "Fast.com upload target")?;
-    Ok(UPLOAD_BYTES as u64)
+    let uploaded = local_bytes.load(Ordering::Relaxed).max(UPLOAD_BYTES as u64);
+    Ok(uploaded)
 }
 
 fn ensure_success(response: &Response, operation: &str) -> Result<()> {
