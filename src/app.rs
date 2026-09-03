@@ -9,17 +9,18 @@ use ratatui::{
 
 use crate::speed::{SpeedUpdate, TestPhase, TestResult};
 
-const BG: Color = Color::Rgb(9, 15, 25);
+const BG: Color = Color::Rgb(10, 14, 23);
 const PANEL: Color = Color::Rgb(15, 24, 38);
 const PANEL_ALT: Color = Color::Rgb(22, 35, 54);
-const PANEL_BORDER: Color = Color::Rgb(35, 55, 80);
-const INK: Color = Color::Rgb(230, 240, 250);
-const MUTED: Color = Color::Rgb(130, 155, 180);
-const CYAN: Color = Color::Rgb(79, 216, 218);
-const BLUE: Color = Color::Rgb(91, 145, 255);
-const AMBER: Color = Color::Rgb(246, 185, 76);
+const PANEL_BORDER: Color = Color::Rgb(30, 45, 65);
+const INK: Color = Color::Rgb(240, 246, 252);
+const MUTED: Color = Color::Rgb(130, 145, 165);
+const DIM: Color = Color::Rgb(80, 95, 115);
+const CYAN: Color = Color::Rgb(0, 212, 255);
+const PURPLE: Color = Color::Rgb(176, 110, 255);
+const AMBER: Color = Color::Rgb(255, 179, 0);
 const RED: Color = Color::Rgb(246, 104, 112);
-const GREEN: Color = Color::Rgb(105, 218, 149);
+const GREEN: Color = Color::Rgb(0, 230, 118);
 
 /// State held by the terminal dashboard while a Fast.com measurement runs.
 #[derive(Debug, Clone)]
@@ -258,66 +259,47 @@ impl App {
 /// Render the complete Fast.com dashboard.
 pub fn ui(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
     // A compact branch avoids layouts with competing minimums on narrow panes and
     // keeps every widget inside a valid rectangle, including a one-line terminal.
     if area.width < 54 || area.height < 14 {
         render_compact(frame, area, app);
+    } else if area.width < 100 || area.height < 28 {
+        render_intermediate(frame, area, app);
     } else {
         render_dashboard(frame, area, app);
     }
 }
 
 fn render_dashboard(frame: &mut Frame, area: Rect, app: &App) {
-    let shell = Block::default()
-        .title(Line::from(vec![
-            Span::styled(
-                " FAST",
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("/", Style::default().fg(AMBER)),
-            Span::styled(
-                "LINK ",
-                Style::default().fg(INK).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("· Internet Speed Test", Style::default().fg(MUTED)),
-        ]))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(PANEL_BORDER))
-        .style(Style::default().bg(BG));
-    let inner = shell.inner(area);
-    frame.render_widget(shell, area);
-
-    if inner.width == 0 || inner.height == 0 {
+    if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let (hero_height, graph_min) = if inner.height >= 26 {
-        (8, 10)
-    } else if inner.height >= 20 {
-        (8, 7)
-    } else if inner.height >= 16 {
-        (6, 5)
-    } else {
-        (5, 4)
-    };
-    let sections = Layout::default()
+    let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),           // Header
-            Constraint::Length(hero_height), // Hero overview
-            Constraint::Min(graph_min),      // Real-time Telemetry Line Graphs
-            Constraint::Length(3),           // Secondary metric cards
-            Constraint::Length(1),           // Footer
+            Constraint::Length(1), // Top Header Row
+            Constraint::Length(1), // Thin Horizontal Divider Rule
+            Constraint::Length(9), // Centered Hero Section
+            Constraint::Length(3), // Metric Triplet (Download, Upload, Latency)
+            Constraint::Min(10),   // Middle Row: 3 Equal Bordered Chart Panels
+            Constraint::Length(7), // Lower Bordered Panel: RESULTS & ABOUT
+            Constraint::Length(1), // Separated Centered Green Success Footer
         ])
-        .split(inner);
+        .split(area);
 
-    render_header(frame, sections[0], app);
-    render_hero(frame, sections[1], app);
-    render_telemetry_graphs(frame, sections[2], app);
-    render_secondary_cards(frame, sections[3], app);
-    render_footer(frame, sections[4], app);
+    render_header(frame, vertical_chunks[0], app);
+    render_divider(frame, vertical_chunks[1]);
+    render_hero(frame, vertical_chunks[2], app);
+    render_metric_triplet(frame, vertical_chunks[3], app);
+    render_charts_row(frame, vertical_chunks[4], app);
+    render_results_and_about(frame, vertical_chunks[5], app);
+    render_footer(frame, vertical_chunks[6], app);
 }
 
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -325,207 +307,165 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let activity = if app.running {
-        "● LIVE MEASUREMENT"
-    } else {
-        "STANDBY"
-    };
-    let activity_color = if app.running { GREEN } else { MUTED };
-
-    let status_text = app.error.as_deref().unwrap_or(&app.status);
-    let status_color = if app.error.is_some() { RED } else { INK };
-
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .constraints([
+            Constraint::Length(16),
+            Constraint::Min(0),
+            Constraint::Length(48),
+        ])
         .split(area);
 
-    let status_line = Paragraph::new(Line::from(vec![
-        Span::styled("Status: ", Style::default().fg(MUTED)),
-        Span::styled(status_text, Style::default().fg(status_color)),
-    ]))
-    .wrap(Wrap { trim: true });
-    frame.render_widget(status_line, cols[0]);
+    let left = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "FAST",
+            Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("/", Style::default().fg(PANEL_BORDER)),
+        Span::styled(
+            "TEST",
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    frame.render_widget(left, cols[0]);
 
-    let badge = Paragraph::new(Line::from(Span::styled(
-        format!("[ {activity} ]"),
-        Style::default()
-            .fg(activity_color)
-            .add_modifier(Modifier::BOLD),
+    let center = Paragraph::new(Line::from(Span::styled(
+        "Internet Speed Test",
+        Style::default().fg(MUTED),
     )))
-    .alignment(ratatui::layout::Alignment::Right);
-    frame.render_widget(badge, cols[1]);
+    .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(center, cols[1]);
+
+    let header_copy =
+        if app.result.is_some() || matches!(app.phase, TestPhase::Complete | TestPhase::Failed) {
+            "Press 's' or Enter to test again · 'q' to quit"
+        } else if app.is_running() {
+            if cols[2].width >= 41 {
+                "Press 's' or Enter to start · 'q' to quit"
+            } else {
+                "'q' to quit"
+            }
+        } else {
+            "Press 's' or Enter to start · 'q' to quit"
+        };
+
+    let text = if (cols[2].width as usize) < header_copy.len() && cols[2].width >= 11 {
+        "'q' to quit"
+    } else if (cols[2].width as usize) < 11 {
+        ""
+    } else {
+        header_copy
+    };
+
+    let right = Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM))))
+        .alignment(ratatui::layout::Alignment::Right);
+    frame.render_widget(right, cols[2]);
+}
+
+fn render_divider(frame: &mut Frame, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let rule = "─".repeat(area.width as usize);
+    let para = Paragraph::new(Line::from(Span::styled(
+        rule,
+        Style::default().fg(PANEL_BORDER),
+    )));
+    frame.render_widget(para, area);
 }
 
 fn render_hero(frame: &mut Frame, area: Rect, app: &App) {
-    let hero_border_color = if app.error.is_some() {
-        RED
-    } else if app.phase == TestPhase::Complete {
-        GREEN
-    } else if app.running {
-        match app.phase {
-            TestPhase::Download => CYAN,
-            TestPhase::Upload => BLUE,
-            TestPhase::Latency => AMBER,
-            _ => CYAN,
-        }
-    } else {
-        PANEL_BORDER
-    };
-
-    let hero_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(hero_border_color))
-        .style(Style::default().bg(PANEL));
-    let inner = hero_block.inner(area);
-    frame.render_widget(hero_block, area);
-
-    if inner.width == 0 || inner.height == 0 {
+    if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let (hero_title, val_str, unit_str, hero_color, subtitle) = match app.phase {
+    let (hero_title, val_str, unit_str, hero_color, status_text) = match app.phase {
         TestPhase::Idle => (
-            "INTERNET SPEED TEST",
-            "0.0".to_string(),
+            "Your Internet Speed",
+            "—".to_string(),
             "Mbps",
             MUTED,
-            "Press s or Enter to start speed measurement",
+            "Ready · press s to start".to_string(),
         ),
         TestPhase::FetchingTargets => (
-            "FINDING TEST TARGETS",
+            "Finding Test Targets",
             "—".to_string(),
             "Mbps",
             CYAN,
-            "Connecting to nearest Fast.com measurement servers...",
+            "Connecting to Fast.com servers...".to_string(),
         ),
         TestPhase::Download => (
-            "DOWNLOAD SPEED",
+            "Download Speed",
             format_measurement_or_dash(app.download_mbps),
             "Mbps",
             CYAN,
-            "Streaming payloads to measure download throughput",
+            format!("Measuring download... {:>3.0}%", app.progress * 100.0),
         ),
         TestPhase::Upload => (
-            "UPLOAD SPEED",
+            "Upload Speed",
             format_measurement_or_dash(app.upload_mbps),
             "Mbps",
-            BLUE,
-            "Sending payloads to measure upload throughput",
+            PURPLE,
+            format!("Measuring upload... {:>3.0}%", app.progress * 100.0),
         ),
         TestPhase::Latency => (
-            "LATENCY / PING",
+            "Latency / Ping",
             format_measurement_or_dash(app.latency_ms),
             "ms",
             AMBER,
-            "Checking round-trip server latency",
+            format!("Measuring latency... {:>3.0}%", app.progress * 100.0),
         ),
         TestPhase::Complete => (
-            "YOUR INTERNET SPEED",
+            "Your Internet Speed",
             format_measurement_or_dash(app.download_mbps),
             "Mbps",
             GREEN,
-            "Speed measurement complete",
+            "Complete ✓ 100%".to_string(),
         ),
         TestPhase::Failed => (
-            "MEASUREMENT FAILED",
+            "Measurement Failed",
             "—".to_string(),
             "Mbps",
             RED,
-            app.error
-                .as_deref()
-                .unwrap_or("The speed test encountered an error"),
+            format!(
+                "Failed · {}",
+                app.error.as_deref().unwrap_or("Error encountered")
+            ),
         ),
     };
 
-    if inner.height >= 5 {
-        let show_subtitle = inner.height >= 7;
-        let digits_height = if inner.height >= 6 { 3 } else { 1 };
-        let mut constraints = vec![
-            Constraint::Length(1),             // Title
-            Constraint::Length(digits_height), // Digits
-        ];
-        if show_subtitle {
-            constraints.push(Constraint::Length(1)); // Subtitle
-        }
-        constraints.push(Constraint::Length(1)); // Progress Bar
-        constraints.push(Constraint::Min(0)); // Stepper (if space)
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Title
+            Constraint::Length(3), // Digits
+            Constraint::Length(1), // Status row ("Complete ✓ 100%")
+            Constraint::Length(1), // Full-width progress rule / gauge
+            Constraint::Min(0),    // Padding
+        ])
+        .split(area);
 
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(inner);
+    let title_line = Paragraph::new(Line::from(Span::styled(
+        hero_title,
+        Style::default()
+            .fg(if app.phase == TestPhase::Complete {
+                GREEN
+            } else if app.running {
+                hero_color
+            } else {
+                MUTED
+            })
+            .add_modifier(Modifier::BOLD),
+    )))
+    .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(title_line, rows[0]);
 
-        let title_line = Paragraph::new(Line::from(Span::styled(
-            hero_title,
-            Style::default()
-                .fg(if app.running { hero_color } else { MUTED })
-                .add_modifier(Modifier::BOLD),
-        )))
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(title_line, rows[0]);
-
-        if rows[1].height >= 3 && rows[1].width >= 20 {
-            let big_lines = build_big_number_lines(&val_str, unit_str, hero_color);
-            let digit_para =
-                Paragraph::new(big_lines).alignment(ratatui::layout::Alignment::Center);
-            frame.render_widget(digit_para, rows[1]);
-        } else {
-            let fallback_line = Paragraph::new(Line::from(vec![
-                Span::styled(
-                    &val_str,
-                    Style::default().fg(hero_color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" {unit_str}"), Style::default().fg(MUTED)),
-            ]))
-            .alignment(ratatui::layout::Alignment::Center);
-            frame.render_widget(fallback_line, rows[1]);
-        }
-
-        let next_idx = if show_subtitle {
-            let sub_line = Paragraph::new(Line::from(Span::styled(
-                subtitle,
-                Style::default().fg(if app.error.is_some() { RED } else { MUTED }),
-            )))
-            .alignment(ratatui::layout::Alignment::Center);
-            frame.render_widget(sub_line, rows[2]);
-            3
-        } else {
-            2
-        };
-
-        let gauge_color = if app.error.is_some() {
-            RED
-        } else if app.phase == TestPhase::Complete {
-            GREEN
-        } else if app.running {
-            hero_color
-        } else {
-            MUTED
-        };
-        let gauge_pct = (app.progress * 100.0).round().clamp(0.0, 100.0) as u16;
-        let gauge_label = format!("{} {:>3}%", phase_name(app.phase), gauge_pct);
-        let gauge = Gauge::default()
-            .gauge_style(
-                Style::default()
-                    .fg(gauge_color)
-                    .bg(PANEL_ALT)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .percent(gauge_pct)
-            .label(gauge_label);
-        frame.render_widget(gauge, rows[next_idx]);
-
-        if rows.len() > next_idx + 1 && rows[next_idx + 1].height > 0 {
-            render_stepper(frame, rows[next_idx + 1], app);
-        }
+    if rows[1].height >= 3 && rows[1].width >= 16 {
+        let big_lines = build_big_number_lines(&val_str, unit_str, hero_color);
+        let digit_para = Paragraph::new(big_lines).alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(digit_para, rows[1]);
     } else {
-        let hero_line = Paragraph::new(Line::from(vec![
-            Span::styled(
-                hero_title,
-                Style::default().fg(hero_color).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" : ", Style::default().fg(MUTED)),
+        let fallback = Paragraph::new(Line::from(vec![
             Span::styled(
                 &val_str,
                 Style::default().fg(hero_color).add_modifier(Modifier::BOLD),
@@ -533,36 +473,230 @@ fn render_hero(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!(" {unit_str}"), Style::default().fg(MUTED)),
         ]))
         .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(hero_line, inner);
+        frame.render_widget(fallback, rows[1]);
     }
+
+    let status_para = Paragraph::new(Line::from(Span::styled(
+        status_text,
+        Style::default()
+            .fg(if app.phase == TestPhase::Complete {
+                GREEN
+            } else if app.error.is_some() {
+                RED
+            } else {
+                MUTED
+            })
+            .add_modifier(if app.phase == TestPhase::Complete {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+    )))
+    .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(status_para, rows[2]);
+
+    let gauge_pct = (app.progress * 100.0).round().clamp(0.0, 100.0) as u16;
+    let gauge_color = if app.error.is_some() {
+        RED
+    } else if app.phase == TestPhase::Complete {
+        GREEN
+    } else if app.running {
+        hero_color
+    } else {
+        MUTED
+    };
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(gauge_color).bg(PANEL_ALT))
+        .percent(gauge_pct)
+        .label("");
+    frame.render_widget(gauge, rows[3]);
 }
-fn render_telemetry_graphs(frame: &mut Frame, area: Rect, app: &App) {
+
+fn render_metric_triplet(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    if area.width >= 70 {
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(area);
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3), // Download
+            Constraint::Length(1),   // Separator
+            Constraint::Ratio(1, 3), // Upload
+            Constraint::Length(1),   // Separator
+            Constraint::Ratio(1, 3), // Latency
+        ])
+        .split(area);
 
-        render_speed_chart(frame, cols[0], app);
-        render_latency_chart(frame, cols[1], app);
-    } else {
-        render_speed_chart(frame, area, app);
-    }
+    let sep_height = area.height.min(3) as usize;
+    let sep = Paragraph::new(vec![Line::from("│"); sep_height])
+        .alignment(ratatui::layout::Alignment::Center)
+        .style(Style::default().fg(PANEL_BORDER));
+    frame.render_widget(sep.clone(), chunks[1]);
+    frame.render_widget(sep, chunks[3]);
+
+    // Download
+    let dl_val = match app.download_mbps {
+        Some(v) => format_measurement(v),
+        None => "—".to_string(),
+    };
+    let dl_peak = app
+        .peak_download
+        .map(|p| format!("Peak: {:.2} Mbps", p))
+        .unwrap_or_else(|| "Peak: —".to_string());
+    let dl_lines = vec![
+        Line::from(Span::styled(
+            "DOWNLOAD",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(
+                dl_val,
+                Style::default()
+                    .fg(if app.phase == TestPhase::Download {
+                        CYAN
+                    } else {
+                        INK
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Mbps", Style::default().fg(MUTED)),
+        ]),
+        Line::from(Span::styled(dl_peak, Style::default().fg(MUTED))),
+    ];
+    frame.render_widget(
+        Paragraph::new(dl_lines).alignment(ratatui::layout::Alignment::Center),
+        chunks[0],
+    );
+
+    // Upload
+    let ul_val = match app.upload_mbps {
+        Some(v) => format_measurement(v),
+        None => "—".to_string(),
+    };
+    let ul_peak = app
+        .peak_upload
+        .map(|p| format!("Peak: {:.2} Mbps", p))
+        .unwrap_or_else(|| "Peak: —".to_string());
+    let ul_lines = vec![
+        Line::from(Span::styled(
+            "UPLOAD",
+            Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(
+                ul_val,
+                Style::default()
+                    .fg(if app.phase == TestPhase::Upload {
+                        PURPLE
+                    } else {
+                        INK
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Mbps", Style::default().fg(MUTED)),
+        ]),
+        Line::from(Span::styled(ul_peak, Style::default().fg(MUTED))),
+    ];
+    frame.render_widget(
+        Paragraph::new(ul_lines).alignment(ratatui::layout::Alignment::Center),
+        chunks[2],
+    );
+
+    // Latency
+    let lat_val = match app.latency_ms {
+        Some(v) => format_measurement(v),
+        None => "—".to_string(),
+    };
+    let lat_stats = match (app.min_latency, app.max_latency) {
+        (Some(min), Some(max)) => format!("Min: {min:.1} ms  Max: {max:.1} ms"),
+        _ => "Min: —  Max: —".to_string(),
+    };
+    let lat_lines = vec![
+        Line::from(Span::styled(
+            "LATENCY",
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(
+                lat_val,
+                Style::default()
+                    .fg(if app.phase == TestPhase::Latency {
+                        AMBER
+                    } else {
+                        INK
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ms", Style::default().fg(MUTED)),
+        ]),
+        Line::from(Span::styled(lat_stats, Style::default().fg(MUTED))),
+    ];
+    frame.render_widget(
+        Paragraph::new(lat_lines).alignment(ratatui::layout::Alignment::Center),
+        chunks[4],
+    );
 }
 
-fn render_speed_chart(frame: &mut Frame, area: Rect, app: &App) {
+fn render_charts_row(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(area);
+
+    render_download_chart(frame, cols[0], app);
+    render_upload_chart(frame, cols[1], app);
+    render_latency_chart(frame, cols[2], app);
+}
+
+fn render_download_chart(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let peak_info = app
+        .peak_download
+        .map(|p| format!(" (Peak: {p:.1} Mbps)"))
+        .unwrap_or_default();
+    let title = Line::from(vec![
+        Span::styled(
+            " DOWNLOAD ",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(peak_info, Style::default().fg(MUTED)),
+    ]);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_set(symbols::border::PLAIN)
+        .border_style(Style::default().fg(PANEL_BORDER))
+        .style(Style::default().bg(PANEL));
+
+    if app.download_points.is_empty() {
+        let msg = if app.running {
+            "Waiting for download measurements..."
+        } else {
+            "Waiting for test start..."
+        };
+        let placeholder = Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(MUTED))))
+            .block(block)
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(placeholder, area);
         return;
     }
 
     let max_time = app
         .download_points
         .iter()
-        .chain(app.upload_points.iter())
         .map(|(t, _)| *t)
         .fold(0.0f64, |acc, t| acc.max(t))
         .max(5.0);
@@ -570,7 +704,6 @@ fn render_speed_chart(frame: &mut Frame, area: Rect, app: &App) {
     let max_speed = app
         .download_points
         .iter()
-        .chain(app.upload_points.iter())
         .map(|(_, s)| *s)
         .fold(0.0f64, |acc, s| acc.max(s))
         .max(10.0);
@@ -594,49 +727,46 @@ fn render_speed_chart(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("{:.0} Mbps", y_max), Style::default().fg(MUTED)),
     ];
 
-    let mut datasets = Vec::new();
-    if !app.download_points.is_empty() {
-        datasets.push(
-            Dataset::default()
-                .name("Download")
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(CYAN))
-                .data(&app.download_points),
+    let datasets = vec![Dataset::default()
+        .name("Download")
+        .marker(symbols::Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(CYAN))
+        .data(&app.download_points)];
+
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(
+            Axis::default()
+                .title(Span::styled("Time", Style::default().fg(MUTED)))
+                .style(Style::default().fg(PANEL_BORDER))
+                .bounds(x_bounds)
+                .labels(x_labels),
+        )
+        .y_axis(
+            Axis::default()
+                .title(Span::styled("Mbps", Style::default().fg(MUTED)))
+                .style(Style::default().fg(PANEL_BORDER))
+                .bounds(y_bounds)
+                .labels(y_labels),
         );
-    }
-    if !app.upload_points.is_empty() {
-        datasets.push(
-            Dataset::default()
-                .name("Upload")
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(BLUE))
-                .data(&app.upload_points),
-        );
+
+    frame.render_widget(chart, area);
+}
+
+fn render_upload_chart(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
     }
 
-    let peak_info = if area.width >= 52 {
-        match (app.peak_download, app.peak_upload) {
-            (Some(dl), Some(ul)) => format!(" (Peak: ↓{dl:.1} / ↑{ul:.1} Mbps)"),
-            (Some(dl), None) => format!(" (Peak: ↓{dl:.1} Mbps)"),
-            (None, Some(ul)) => format!(" (Peak: ↑{ul:.1} Mbps)"),
-            (None, None) => String::new(),
-        }
-    } else if area.width >= 35 {
-        match (app.peak_download, app.peak_upload) {
-            (Some(dl), Some(ul)) => format!(" (↓{dl:.0}/↑{ul:.0}M)"),
-            (Some(dl), None) => format!(" (↓{dl:.0}M)"),
-            (None, Some(ul)) => format!(" (↑{ul:.0}M)"),
-            (None, None) => String::new(),
-        }
-    } else {
-        String::new()
-    };
+    let peak_info = app
+        .peak_upload
+        .map(|p| format!(" (Peak: {p:.1} Mbps)"))
+        .unwrap_or_default();
     let title = Line::from(vec![
         Span::styled(
-            " SPEED FLUCTUATION ",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            " UPLOAD ",
+            Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
         ),
         Span::styled(peak_info, Style::default().fg(MUTED)),
     ]);
@@ -644,14 +774,15 @@ fn render_speed_chart(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(symbols::border::PLAIN)
         .border_style(Style::default().fg(PANEL_BORDER))
         .style(Style::default().bg(PANEL));
 
-    if datasets.is_empty() {
+    if app.upload_points.is_empty() {
         let msg = if app.running {
-            "Waiting for throughput measurements..."
+            "Waiting for upload measurements..."
         } else {
-            "Real-time speed fluctuation graph · press s to start"
+            "Waiting for test start..."
         };
         let placeholder = Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(MUTED))))
             .block(block)
@@ -659,6 +790,46 @@ fn render_speed_chart(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(placeholder, area);
         return;
     }
+
+    let max_time = app
+        .upload_points
+        .iter()
+        .map(|(t, _)| *t)
+        .fold(0.0f64, |acc, t| acc.max(t))
+        .max(5.0);
+
+    let max_speed = app
+        .upload_points
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(0.0f64, |acc, s| acc.max(s))
+        .max(10.0);
+
+    let y_max = round_up_chart_max(max_speed);
+    let x_bounds = [0.0, max_time];
+    let y_bounds = [0.0, y_max];
+
+    let x_labels = vec![
+        Span::styled("0s", Style::default().fg(MUTED)),
+        Span::styled(
+            format!("{:.1}s", max_time / 2.0),
+            Style::default().fg(MUTED),
+        ),
+        Span::styled(format!("{:.1}s", max_time), Style::default().fg(MUTED)),
+    ];
+
+    let y_labels = vec![
+        Span::styled("0", Style::default().fg(MUTED)),
+        Span::styled(format!("{:.0}", y_max / 2.0), Style::default().fg(MUTED)),
+        Span::styled(format!("{:.0} Mbps", y_max), Style::default().fg(MUTED)),
+    ];
+
+    let datasets = vec![Dataset::default()
+        .name("Upload")
+        .marker(symbols::Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(PURPLE))
+        .data(&app.upload_points)];
 
     let chart = Chart::new(datasets)
         .block(block)
@@ -730,27 +901,14 @@ fn render_latency_chart(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    let (chart_heading, stats_info) = if area.width >= 42 {
-        let stats = match (app.min_latency, app.avg_latency, app.max_latency) {
-            (Some(min), Some(avg), Some(max)) => {
-                format!(" (Min: {min:.1} / Avg: {avg:.1} / Max: {max:.1} ms)")
-            }
-            _ => String::new(),
-        };
-        (" LATENCY / JITTER ", stats)
-    } else if area.width >= 28 {
-        let stats = match app.avg_latency {
-            Some(avg) => format!(" (~{avg:.0}ms)"),
-            None => String::new(),
-        };
-        (" LATENCY ", stats)
-    } else {
-        (" LATENCY ", String::new())
+    let stats_info = match (app.min_latency, app.max_latency) {
+        (Some(min), Some(max)) => format!(" (Min: {min:.1} / Max: {max:.1} ms)"),
+        _ => String::new(),
     };
 
     let title = Line::from(vec![
         Span::styled(
-            chart_heading,
+            " LATENCY ",
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ),
         Span::styled(stats_info, Style::default().fg(MUTED)),
@@ -759,6 +917,7 @@ fn render_latency_chart(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(symbols::border::PLAIN)
         .border_style(Style::default().fg(PANEL_BORDER))
         .style(Style::default().bg(PANEL));
 
@@ -766,7 +925,7 @@ fn render_latency_chart(frame: &mut Frame, area: Rect, app: &App) {
         let msg = if app.running {
             "Probing ping latency..."
         } else {
-            "Real-time latency fluctuation graph"
+            "Waiting for test start..."
         };
         let placeholder = Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(MUTED))))
             .block(block)
@@ -819,174 +978,15 @@ fn round_up_chart_max(val: f64) -> f64 {
     }
 }
 
-fn render_stepper(frame: &mut Frame, area: Rect, app: &App) {
+fn render_results_and_about(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-
-    let step_state = |target_phase: TestPhase| -> (&'static str, Color, bool) {
-        match target_phase {
-            TestPhase::FetchingTargets => match app.phase {
-                TestPhase::Idle => ("○ Targets", MUTED, false),
-                TestPhase::FetchingTargets => ("▶ Targets", CYAN, true),
-                _ => ("✓ Targets", GREEN, false),
-            },
-            TestPhase::Download => match app.phase {
-                TestPhase::Idle | TestPhase::FetchingTargets => ("○ Download", MUTED, false),
-                TestPhase::Download => ("▶ Download", CYAN, true),
-                TestPhase::Upload | TestPhase::Latency | TestPhase::Complete => {
-                    ("✓ Download", GREEN, false)
-                }
-                TestPhase::Failed => ("✕ Download", RED, false),
-            },
-            TestPhase::Upload => match app.phase {
-                TestPhase::Idle | TestPhase::FetchingTargets | TestPhase::Download => {
-                    ("○ Upload", MUTED, false)
-                }
-                TestPhase::Upload => ("▶ Upload", BLUE, true),
-                TestPhase::Latency | TestPhase::Complete => ("✓ Upload", GREEN, false),
-                TestPhase::Failed => ("○ Upload", MUTED, false),
-            },
-            TestPhase::Latency => match app.phase {
-                TestPhase::Complete => ("✓ Latency", GREEN, false),
-                TestPhase::Latency => ("▶ Latency", AMBER, true),
-                TestPhase::Failed => ("○ Latency", MUTED, false),
-                _ => ("○ Latency", MUTED, false),
-            },
-            _ => ("○", MUTED, false),
-        }
-    };
-
-    let (s1, c1, b1) = step_state(TestPhase::FetchingTargets);
-    let (s2, c2, b2) = step_state(TestPhase::Download);
-    let (s3, c3, b3) = step_state(TestPhase::Upload);
-    let (s4, c4, b4) = step_state(TestPhase::Latency);
-
-    let format_step = |text: &'static str, color: Color, bold: bool| -> Span<'static> {
-        let mut style = Style::default().fg(color);
-        if bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        Span::styled(text, style)
-    };
-
-    let sep = Span::styled("  ───  ", Style::default().fg(PANEL_BORDER));
-
-    let stepper_line = Paragraph::new(Line::from(vec![
-        format_step(s1, c1, b1),
-        sep.clone(),
-        format_step(s2, c2, b2),
-        sep.clone(),
-        format_step(s3, c3, b3),
-        sep,
-        format_step(s4, c4, b4),
-    ]))
-    .alignment(ratatui::layout::Alignment::Center);
-
-    frame.render_widget(stepper_line, area);
-}
-
-fn render_secondary_cards(frame: &mut Frame, area: Rect, app: &App) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let cards = if area.width >= 60 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(34),
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-            ])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Length(2),
-                Constraint::Length(2),
-            ])
-            .split(area)
-    };
-
-    let dl_sub = app.peak_download.map(|p| format!("peak {p:.1}"));
-    let ul_sub = app.peak_upload.map(|p| format!("peak {p:.1}"));
-    let lat_sub = match (app.min_latency, app.max_latency) {
-        (Some(min), Some(max)) => Some(format!("min {min:.1} / max {max:.1}")),
-        _ => None,
-    };
-
-    render_metric_card(
-        frame,
-        cards[0],
-        " ⬇ DOWNLOAD ",
-        app.download_mbps,
-        "Mbps",
-        dl_sub.as_deref(),
-        CYAN,
-        app.phase == TestPhase::Download,
-        app.phase == TestPhase::Complete || app.download_mbps.is_some(),
-    );
-    render_metric_card(
-        frame,
-        cards[1],
-        " ⬆ UPLOAD ",
-        app.upload_mbps,
-        "Mbps",
-        ul_sub.as_deref(),
-        BLUE,
-        app.phase == TestPhase::Upload,
-        app.phase == TestPhase::Complete || app.upload_mbps.is_some(),
-    );
-    render_metric_card(
-        frame,
-        cards[2],
-        " ⟳ LATENCY ",
-        app.latency_ms,
-        "ms",
-        lat_sub.as_deref(),
-        AMBER,
-        app.phase == TestPhase::Latency,
-        app.phase == TestPhase::Complete || app.latency_ms.is_some(),
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_metric_card(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    value: Option<f64>,
-    unit: &str,
-    sub_info: Option<&str>,
-    accent_color: Color,
-    is_active: bool,
-    is_done: bool,
-) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let border_color = if is_active {
-        accent_color
-    } else {
-        PANEL_BORDER
-    };
-
-    let title_style = if is_active {
-        Style::default()
-            .fg(accent_color)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(MUTED).add_modifier(Modifier::BOLD)
-    };
 
     let block = Block::default()
-        .title(Span::styled(label, title_style))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_set(symbols::border::PLAIN)
+        .border_style(Style::default().fg(PANEL_BORDER))
         .style(Style::default().bg(PANEL));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -995,80 +995,165 @@ fn render_metric_card(
         return;
     }
 
-    let number = match value {
-        Some(v) => format_measurement(v),
-        None => "—".to_string(),
-    };
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Length(1),
+            Constraint::Percentage(50),
+        ])
+        .split(inner);
 
-    let value_color = if is_active {
-        accent_color
-    } else if is_done {
-        INK
-    } else {
-        MUTED
-    };
+    // Internal vertical divider
+    let divider_lines = vec![Line::from("│"); inner.height as usize];
+    let divider = Paragraph::new(divider_lines).style(Style::default().fg(PANEL_BORDER));
+    frame.render_widget(divider, cols[1]);
 
-    let badge = if is_active {
-        Span::styled(
-            " [LIVE]",
-            Style::default()
-                .fg(accent_color)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else if is_done && value.is_some() {
-        Span::styled(" [DONE]", Style::default().fg(GREEN))
-    } else {
-        Span::raw("")
-    };
-
-    let lines = if let Some(sub) = sub_info {
-        if inner.height >= 2 {
-            vec![
-                Line::from(vec![
-                    Span::styled(
-                        number,
-                        Style::default()
-                            .fg(value_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!(" {unit}"), Style::default().fg(MUTED)),
-                    badge,
-                ]),
-                Line::from(Span::styled(sub, Style::default().fg(MUTED))),
-            ]
-        } else {
-            vec![Line::from(vec![
-                Span::styled(
-                    number,
-                    Style::default()
-                        .fg(value_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" {unit}"), Style::default().fg(MUTED)),
-                badge,
-            ])]
-        }
-    } else {
-        vec![Line::from(vec![
+    // RESULTS (Left)
+    let mut results_lines = vec![Line::from(Span::styled(
+        "RESULTS",
+        Style::default().fg(INK).add_modifier(Modifier::BOLD),
+    ))];
+    if let Some(result) = &app.result {
+        let dl_str = format!("{:.2}", result.download_mbps);
+        let ul_str = format!("{:.2}", result.upload_mbps);
+        let lat_str = format!("{:.2}", result.latency_ms);
+        let dl_peak = app
+            .peak_download
+            .map(|p| format!(" (Peak: {p:.2} Mbps)"))
+            .unwrap_or_default();
+        let ul_peak = app
+            .peak_upload
+            .map(|p| format!(" (Peak: {p:.2} Mbps)"))
+            .unwrap_or_default();
+        let lat_stats = match (app.min_latency, app.max_latency) {
+            (Some(min), Some(max)) => format!(" (Min: {min:.1} / Max: {max:.1} ms)"),
+            _ => String::new(),
+        };
+        results_lines.push(Line::from(vec![
+            Span::styled("  Download: ", Style::default().fg(MUTED)),
             Span::styled(
-                number,
-                Style::default()
-                    .fg(value_color)
-                    .add_modifier(Modifier::BOLD),
+                dl_str,
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" {unit}"), Style::default().fg(MUTED)),
-            badge,
-        ])]
-    };
+            Span::styled(" Mbps", Style::default().fg(MUTED)),
+            Span::styled(dl_peak, Style::default().fg(MUTED)),
+        ]));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Upload:   ", Style::default().fg(MUTED)),
+            Span::styled(
+                ul_str,
+                Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Mbps", Style::default().fg(MUTED)),
+            Span::styled(ul_peak, Style::default().fg(MUTED)),
+        ]));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Latency:  ", Style::default().fg(MUTED)),
+            Span::styled(
+                lat_str,
+                Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ms", Style::default().fg(MUTED)),
+            Span::styled(lat_stats, Style::default().fg(MUTED)),
+        ]));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Provider: ", Style::default().fg(MUTED)),
+            Span::styled("Powered by fast.com", Style::default().fg(INK)),
+        ]));
+    } else if app.running {
+        results_lines.push(Line::from(Span::styled(
+            "  Measurement in progress...",
+            Style::default().fg(MUTED),
+        )));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Active Phase: ", Style::default().fg(MUTED)),
+            Span::styled(
+                phase_name(app.phase),
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Provider: ", Style::default().fg(MUTED)),
+            Span::styled("Powered by fast.com", Style::default().fg(INK)),
+        ]));
+    } else if let Some(err) = &app.error {
+        results_lines.push(Line::from(Span::styled(
+            format!("  Error: {err}"),
+            Style::default().fg(RED),
+        )));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Provider: ", Style::default().fg(MUTED)),
+            Span::styled("Powered by fast.com", Style::default().fg(INK)),
+        ]));
+    } else {
+        results_lines.push(Line::from(Span::styled(
+            "  No test run recorded",
+            Style::default().fg(MUTED),
+        )));
+        results_lines.push(Line::from(Span::styled(
+            "  Press s or Enter to begin speed test",
+            Style::default().fg(MUTED),
+        )));
+        results_lines.push(Line::from(vec![
+            Span::styled("  Provider: ", Style::default().fg(MUTED)),
+            Span::styled("Powered by fast.com", Style::default().fg(INK)),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(results_lines), cols[0]);
 
-    let content = Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
-    frame.render_widget(content, inner);
+    // ABOUT (Right)
+    let about_lines = vec![
+        Line::from(Span::styled(
+            "ABOUT",
+            Style::default().fg(INK).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  Fast.com estimates your current internet download and upload speed.",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(Span::styled(
+            "  Measurements perform multi-stream transfers using Netflix server network.",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(Span::styled(
+            "  Includes unloaded ping latency and peak throughput estimates.",
+            Style::default().fg(MUTED),
+        )),
+        Line::from(vec![
+            Span::styled("  Service: ", Style::default().fg(MUTED)),
+            Span::styled("Powered by fast.com", Style::default().fg(DIM)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(about_lines), cols[2]);
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+
+    let status_span = if app.phase == TestPhase::Complete {
+        Span::styled(
+            "Testing completed successfully",
+            Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+        )
+    } else if app.running {
+        Span::styled(
+            "Testing in progress...",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )
+    } else if app.error.is_some() {
+        Span::styled(
+            "Measurement failed · press s to retry",
+            Style::default().fg(RED).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            "Ready · press s to start a measurement",
+            Style::default().fg(MUTED),
+        )
+    };
 
     let action = if app.running {
         "test in progress..."
@@ -1079,18 +1164,61 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled("[ ", Style::default().fg(AMBER)),
+        status_span,
+        Span::styled("      ", Style::default()),
+        Span::styled("[ ", Style::default().fg(PANEL_BORDER)),
         Span::styled(
             action,
             Style::default().fg(INK).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" ]", Style::default().fg(AMBER)),
+        Span::styled(" ]", Style::default().fg(PANEL_BORDER)),
         Span::styled("      ", Style::default()),
         Span::styled("[ q / Esc quit ]", Style::default().fg(MUTED)),
     ]))
     .alignment(ratatui::layout::Alignment::Center)
     .style(Style::default().bg(BG));
     frame.render_widget(footer, area);
+}
+
+fn render_intermediate(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let show_chart = area.height >= 18;
+    let hero_height = if area.height >= 24 { 7 } else { 5 };
+
+    let mut constraints = vec![
+        Constraint::Length(1),           // Header
+        Constraint::Length(1),           // Divider
+        Constraint::Length(hero_height), // Hero
+        Constraint::Length(3),           // Metric Triplet
+    ];
+    if show_chart {
+        constraints.push(Constraint::Min(6)); // Active chart
+    }
+    constraints.push(Constraint::Length(1)); // Footer
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    render_header(frame, sections[0], app);
+    render_divider(frame, sections[1]);
+    render_hero(frame, sections[2], app);
+    render_metric_triplet(frame, sections[3], app);
+
+    if show_chart && sections.len() > 5 {
+        match app.phase {
+            TestPhase::Upload => render_upload_chart(frame, sections[4], app),
+            TestPhase::Latency => render_latency_chart(frame, sections[4], app),
+            _ => render_download_chart(frame, sections[4], app),
+        }
+        render_footer(frame, sections[5], app);
+    } else {
+        render_footer(frame, sections[4], app);
+    }
 }
 
 fn render_compact(frame: &mut Frame, area: Rect, app: &App) {
@@ -1132,7 +1260,10 @@ fn render_compact(frame: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(INK).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" Mbps   ", Style::default().fg(MUTED)),
-                Span::styled("↑ ", Style::default().fg(BLUE).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "↑ ",
+                    Style::default().fg(PURPLE).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(
                     format_measurement_or_dash(app.upload_mbps),
                     Style::default().fg(INK).add_modifier(Modifier::BOLD),
@@ -1419,6 +1550,7 @@ mod tests {
             (53, 13),
             (80, 24),
             (120, 40),
+            (156, 47),
             (200, 60),
         ];
         let phases = [
@@ -1524,5 +1656,64 @@ mod tests {
             }
             println!("{line}");
         }
+    }
+
+    #[test]
+    fn test_reference_dashboard_156x47_labels_and_structure() {
+        let mut app = App::new();
+        app.phase = TestPhase::Complete;
+        app.running = false;
+        app.download_mbps = Some(73.25);
+        app.upload_mbps = Some(26.75);
+        app.latency_ms = Some(9.50);
+        app.peak_download = Some(75.00);
+        app.peak_upload = Some(28.00);
+        app.min_latency = Some(8.50);
+        app.max_latency = Some(11.00);
+        app.avg_latency = Some(9.50);
+        app.result = Some(TestResult {
+            download_mbps: 73.25,
+            upload_mbps: 26.75,
+            latency_ms: 9.50,
+        });
+        app.download_points = vec![(0.0, 50.0), (1.0, 73.25)];
+        app.upload_points = vec![(1.0, 20.0), (2.0, 26.75)];
+        app.latency_points = vec![(1.0, 9.50)];
+        app.progress = 1.0;
+
+        let backend = TestBackend::new(156, 47);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| ui(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        let mut rendered = String::new();
+        for y in 0..buffer.area.height {
+            let mut line = String::new();
+            for x in 0..buffer.area.width {
+                line.push_str(buffer[(x, y)].symbol());
+            }
+            rendered.push_str(line.trim_end());
+            rendered.push('\n');
+        }
+
+        assert!(rendered.contains("FAST/TEST"));
+        assert!(rendered
+            .to_ascii_lowercase()
+            .contains("internet speed test"));
+        assert!(rendered
+            .to_ascii_lowercase()
+            .contains("your internet speed"));
+        assert!(rendered.contains("Complete"));
+        assert!(rendered.contains("100%"));
+        assert!(rendered.contains("DOWNLOAD"));
+        assert!(rendered.contains("UPLOAD"));
+        assert!(rendered.contains("LATENCY"));
+        assert!(rendered.contains("RESULTS"));
+        assert!(rendered.contains("ABOUT"));
+        assert!(rendered.contains("Powered by fast.com"));
+        assert!(rendered.contains("Testing completed successfully"));
+        assert!(rendered.contains("73.25"));
+        assert!(rendered.contains("26.75"));
+        assert!(rendered.contains("9.50"));
     }
 }
