@@ -1,5 +1,7 @@
 mod app;
 mod speed;
+#[cfg(test)]
+mod ui_reference_tests;
 
 use std::{
     io::{self, Stdout},
