@@ -736,6 +736,7 @@ fn render_download_chart(frame: &mut Frame, area: Rect, app: &App) {
 
     let chart = Chart::new(datasets)
         .block(block)
+        .style(Style::default().bg(PANEL))
         .x_axis(
             Axis::default()
                 .title(Span::styled("Time", Style::default().fg(MUTED)))
@@ -833,6 +834,7 @@ fn render_upload_chart(frame: &mut Frame, area: Rect, app: &App) {
 
     let chart = Chart::new(datasets)
         .block(block)
+        .style(Style::default().bg(PANEL))
         .x_axis(
             Axis::default()
                 .title(Span::styled("Time", Style::default().fg(MUTED)))
@@ -936,6 +938,7 @@ fn render_latency_chart(frame: &mut Frame, area: Rect, app: &App) {
 
     let chart = Chart::new(datasets)
         .block(block)
+        .style(Style::default().bg(PANEL))
         .x_axis(
             Axis::default()
                 .title(Span::styled("Probe", Style::default().fg(MUTED)))
