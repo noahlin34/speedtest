@@ -288,7 +288,7 @@ fn render_dashboard(frame: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(9), // Centered Hero Section
             Constraint::Length(3), // Metric Triplet (Download, Upload, Latency)
             Constraint::Min(10),   // Middle Row: 3 Equal Bordered Chart Panels
-            Constraint::Length(7), // Lower Bordered Panel: RESULTS & ABOUT
+            Constraint::Length(7), // Lower Bordered Panel: RESULTS
             Constraint::Length(1), // Separated Centered Green Success Footer
         ])
         .split(area);
@@ -298,7 +298,7 @@ fn render_dashboard(frame: &mut Frame, area: Rect, app: &App) {
     render_hero(frame, vertical_chunks[2], app);
     render_metric_triplet(frame, vertical_chunks[3], app);
     render_charts_row(frame, vertical_chunks[4], app);
-    render_results_and_about(frame, vertical_chunks[5], app);
+    render_results(frame, vertical_chunks[5], app);
     render_footer(frame, vertical_chunks[6], app);
 }
 
@@ -978,7 +978,7 @@ fn round_up_chart_max(val: f64) -> f64 {
     }
 }
 
-fn render_results_and_about(frame: &mut Frame, area: Rect, app: &App) {
+fn render_results(frame: &mut Frame, area: Rect, app: &App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -995,21 +995,7 @@ fn render_results_and_about(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Length(1),
-            Constraint::Percentage(50),
-        ])
-        .split(inner);
-
-    // Internal vertical divider
-    let divider_lines = vec![Line::from("│"); inner.height as usize];
-    let divider = Paragraph::new(divider_lines).style(Style::default().fg(PANEL_BORDER));
-    frame.render_widget(divider, cols[1]);
-
-    // RESULTS (Left)
+    // RESULTS
     let mut results_lines = vec![Line::from(Span::styled(
         "RESULTS",
         Style::default().fg(INK).add_modifier(Modifier::BOLD),
@@ -1100,32 +1086,7 @@ fn render_results_and_about(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("Powered by fast.com", Style::default().fg(INK)),
         ]));
     }
-    frame.render_widget(Paragraph::new(results_lines), cols[0]);
-
-    // ABOUT (Right)
-    let about_lines = vec![
-        Line::from(Span::styled(
-            "ABOUT",
-            Style::default().fg(INK).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            "  Fast.com estimates your current internet download and upload speed.",
-            Style::default().fg(MUTED),
-        )),
-        Line::from(Span::styled(
-            "  Measurements perform multi-stream transfers using Netflix server network.",
-            Style::default().fg(MUTED),
-        )),
-        Line::from(Span::styled(
-            "  Includes unloaded ping latency and peak throughput estimates.",
-            Style::default().fg(MUTED),
-        )),
-        Line::from(vec![
-            Span::styled("  Service: ", Style::default().fg(MUTED)),
-            Span::styled("Powered by fast.com", Style::default().fg(DIM)),
-        ]),
-    ];
-    frame.render_widget(Paragraph::new(about_lines), cols[2]);
+    frame.render_widget(Paragraph::new(results_lines), inner);
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
@@ -1709,7 +1670,6 @@ mod tests {
         assert!(rendered.contains("UPLOAD"));
         assert!(rendered.contains("LATENCY"));
         assert!(rendered.contains("RESULTS"));
-        assert!(rendered.contains("ABOUT"));
         assert!(rendered.contains("Powered by fast.com"));
         assert!(rendered.contains("Testing completed successfully"));
         assert!(rendered.contains("73.25"));
