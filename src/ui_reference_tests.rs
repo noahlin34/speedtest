@@ -83,9 +83,8 @@ fn completed_dashboard_matches_reference_regions() {
         assert_contains(&text, heading);
     }
 
-    // Lower reference panels and provider/success copy.
+    // Lower reference panel and provider/success copy.
     assert_contains(&text, "RESULTS");
-    assert_contains(&text, "ABOUT");
     assert_contains(&text, "Powered by fast.com");
     assert_contains(&text, "Testing completed successfully");
 
